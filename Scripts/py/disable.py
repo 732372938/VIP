@@ -21,8 +21,8 @@ logger.addHandler(logging.StreamHandler())  # 添加控制台日志
 
 
 ip = "localhost"
-res_str = os.getenv("RESERVE", "Aaron-lv_sync")
-res_list = res_str.split("&")
+sub_str = os.getenv("RES_SUB", "Aaron-lv_sync")
+sub_list = sub_str.split("&")
 res_only = os.getenv("RES_ONLY", True)
 headers = {
     "Accept": "application/json",
@@ -58,45 +58,43 @@ def get_tasklist() -> list:
 def get_duplicate_list(tasklist: list) -> tuple:
     names = {}
     ids = []
-    temps = []
+    tem_tasks = []
+    cmds = []
+    tem_cmds = []
     for task in tasklist:
-        for res_str in res_list:
+        for sub_str in sub_list:
             if (
-                task.get("name") in names.keys()
-                and task.get("command").find(res_str) == -1
+                task["_id"] not in ids
+                and task.get("name") in names.keys()
+                and task.get("command").find(sub_str) == -1
             ):
                 ids.append(task["_id"])
-            else:
-                temps.append(task)
+                cmds.append(task.get("command"))
+            elif task not in tem_tasks:
+                tem_cmds.append(task.get("command"))
+                tem_tasks.append(task)
                 names[task["name"]] = 1
-    return temps, ids
+    return ids, cmds, tem_cmds, tem_tasks
 
 
-def reserve_task_only(temps: list, ids: list) -> list:
+def reserve_task_only(ids: list, cmds: list, tem_cmds: list, tem_tasks: list) -> tuple:
     if len(ids) == 0:
         return ids
-    for task1 in temps:
-        for task2 in temps:
-            for res_str in res_list:
+    for task1 in tem_tasks:
+        for task2 in tem_tasks:
+            for sub_str in sub_list:
                 if (
-                    task1["_id"] != task2["_id"]
+                    task1["_id"] not in ids
+                    and task1["_id"] != task2["_id"]
                     and task1["name"] == task2["name"]
-                    and task1["command"].find(res_str) == -1
+                    and task1["command"].find(sub_str) == -1
                 ):
                     ids.append(task1["_id"])
-    return ids
+                    cmds.append(task1.get("command"))
+                elif task1.get("command") not in tem_cmds:
+                    tem_cmds.append(task1.get("command"))
 
-
-def form_data(ids: list) -> list:
-    raw_data = "["
-    count = 0
-    for id in ids:
-        raw_data += f'"{id}"'
-        if count < len(ids) - 1:
-            raw_data += ", "
-        count += 1
-    raw_data += "]"
-    return raw_data
+    return ids, cmds, tem_cmds
 
 
 def disable_duplicate_tasks(ids: list) -> None:
@@ -129,18 +127,30 @@ if __name__ == "__main__":
     # 直接从 /ql/config/auth.json中读取当前token
     token = get_token()
     headers["Authorization"] = f"Bearer {token}"
+
+    sub_str = "\n".join(sub_list)
+    logger.info(f"\n=== 你选择保留的脚本前缀为 ===\n{sub_str}")
     tasklist = get_tasklist()
     # 如果仍是空的，则报警
     if len(tasklist) == 0:
         logger.info("❌无法获取 tasklist!!!")
-    temps, ids = get_duplicate_list(tasklist)
+
+    ids, cmds, tem_cmds, tem_tasks = get_duplicate_list(tasklist)
     # 是否在重复任务中只保留设置的前缀
     if res_only:
-        ids = reserve_task_only(temps, ids)
+        ids, cmds, tem_cmds = reserve_task_only(ids, cmds, tem_cmds, tem_tasks)
+
     before = f"禁用前数量为：{len(tasklist)}"
-    logger.info(before)
-    after = f"禁用重复任务后，数量为：{len(tasklist) - len(ids)}"
-    logger.info(after)
+    after = f"禁用后数量为：{len(tasklist) - len(ids)}"
+    logging.info("\n=== 禁用数量统计 ===\n" + before + "\n" + after)
+
+    dis_str = "\n".join(cmds)
+    res_str = "\n".join(tem_cmds)
+    dis_result = f"\n=== 本次禁用了以下任务 ===\n{dis_str}"
+    res_result = f"\n=== 本次保留了以下任务 ===\n{res_str}"
+    logger.info(dis_result)
+    logger.info(res_result)
+
     if len(ids) == 0:
         logger.info("😁没有重复任务~")
     else:
